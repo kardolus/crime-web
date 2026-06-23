@@ -162,6 +162,19 @@ def summary_kpis(year, klass, borough, cat):
 def hotspots(year, klass, borough, cat, limit=500):
     key = f"hot:{year}:{klass}:{borough}:{cat}:{limit}"
 
+    # Fully-unfiltered view == the precomputed all-time totals: read the 25k-row
+    # hotspots table directly instead of re-aggregating 10M complaints (which is a
+    # slow cold scan). Filtered views still group over complaints (index-narrowed).
+    if year == "all" and klass == "all" and borough == "citywide" and cat == "all":
+        def produce_all():
+            rows = _query("""SELECT lat, lon, label, n_complaints total,
+                                    n_felony felony, n_misd misd, n_violation violation
+                             FROM hotspots ORDER BY n_complaints DESC LIMIT %s""", [int(limit)])
+            return [{"lat": r["lat"], "lon": r["lon"], "label": r["label"] or "",
+                     "total": _i(r["total"]), "felony": _i(r["felony"]),
+                     "misd": _i(r["misd"]), "violation": _i(r["violation"])} for r in rows]
+        return _q(key, 6 * 3600, produce_all, [])
+
     def produce():
         w, p = _where(year, klass, borough, cat, prefix="c.")
         rows = _query(f"""
