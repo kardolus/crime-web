@@ -128,6 +128,7 @@ def page(title: str, active: str, body: str, filters: dict, head_extra: str = ""
 </script>
 {_common_js(filters)}
 {head_extra}
+<script defer src="https://analytics.kardol.us/script.js" data-website-id="c46a07e0-084f-4ab1-8c18-929a8845db43"></script>
 </head>
 <body>
 {_nav(active, filters)}
