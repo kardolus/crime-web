@@ -1,0 +1,85 @@
+# crime-web — public NYC Crime Map. Reads a local Postgres+PostGIS mirror of NYPD
+# Complaint Data (Socrata qgea-i56i + 5uac-w243), refreshed daily by the ingester
+# CronJob in 20-crime-data.yaml. In-memory query cache assumes a SINGLE replica.
+#
+# Prereqs:
+#   kubectl create namespace crime
+#   kubectl -n crime create secret generic crime-db \
+#       --from-literal=CRIME_DB_URL='postgresql://crime_ro:<ro pw>@crime-postgres.crime.svc.cluster.local:5432/crime?sslmode=disable'
+#   docker build -t ghcr.io/kardolus/crime-web:v1 . ; docker push ghcr.io/kardolus/crime-web:v1
+#   kubectl -n crime create secret docker-registry ghcr-pull \
+#       --docker-server=ghcr.io --docker-username=kardolus --docker-password="$GITHUB_API_KEY"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crime-web
+  namespace: crime
+  labels: {app: crime-web}
+spec:
+  replicas: 1                      # in-memory cache => single replica only
+  selector:
+    matchLabels: {app: crime-web}
+  template:
+    metadata:
+      labels: {app: crime-web}
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: crime-web
+          image: ghcr.io/kardolus/crime-web:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {containerPort: 8000, name: http}
+          env:
+            - name: CRIME_DB_URL
+              valueFrom:
+                secretKeyRef: {name: crime-db, key: CRIME_DB_URL}
+          readinessProbe:
+            httpGet: {path: /ready, port: 8000}
+            initialDelaySeconds: 3
+            periodSeconds: 15
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8000}
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 25m, memory: 96Mi}
+            limits: {memory: 256Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crime-web
+  namespace: crime
+  labels: {app: crime-web}
+spec:
+  selector: {app: crime-web}
+  ports:
+    - {name: http, port: 8000, targetPort: 8000}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: crime-web
+  namespace: crime
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+    nginx.ingress.kubernetes.io/limit-rps: "20"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: crime.kardol.us
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: crime-web
+                port:
+                  number: 8000

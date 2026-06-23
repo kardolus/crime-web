@@ -1,0 +1,118 @@
+# crime data layer: a no-selector Service+Endpoints pointing at the host-docker
+# Postgres+PostGIS box (10.0.0.120:5436), plus the daily + weekly ingester CronJobs.
+#
+# Host DB (created on forge, not in k8s — same stateless pattern as bart/citibike/crashes):
+#   docker run -d --name crime-postgres --restart unless-stopped \
+#     -e POSTGRES_DB=crime -e POSTGRES_USER=crime -e POSTGRES_PASSWORD=<pw> \
+#     -v crime-pgdata:/var/lib/postgresql/data -p 5436:5432 postgis/postgis:16-3.4
+#   roles: crime (rw, ingester) + crime_ro (web) + crime_monitoring (pg_monitor).
+#   pw in ~/.crime-pg-pw / ~/.crime-pg-ro-pw / ~/.crime-pg-mon-pw
+#
+# Prereq secrets:
+#   kubectl -n crime create secret generic crime-db-rw \
+#     --from-literal=CRIME_DB_URL='postgresql://crime:<pw>@crime-postgres.crime.svc.cluster.local:5432/crime?sslmode=disable'
+#   kubectl -n crime create secret generic opendata \
+#     --from-literal=OPENDATA_API_KEY_ID='<id>' --from-literal=OPENDATA_API_KEY_SECRET='<secret>'
+#   # one-time full backfill (BOTH resources, ~10M rows):
+#   kubectl -n crime create job crime-backfill --from=cronjob/crime-ingest -- python -m crimeweb.ingest backfill
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crime-postgres
+  namespace: crime
+spec:
+  ports:
+    - {name: pg, port: 5432, targetPort: 5436}
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: crime-postgres
+  namespace: crime
+subsets:
+  - addresses:
+      - {ip: 10.0.0.120}
+    ports:
+      - {name: pg, port: 5436}
+---
+# Daily: current-YTD delta only (cheap — ~3 pages + cheap recluster).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: crime-ingest
+  namespace: crime
+spec:
+  schedule: "40 9 * * *"          # 09:40 UTC ≈ 05:40 ET daily
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        spec:
+          restartPolicy: Never
+          imagePullSecrets:
+            - name: ghcr-pull
+          containers:
+            - name: ingest
+              image: ghcr.io/kardolus/crime-web:v1
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-m", "crimeweb.ingest", "daily"]
+              env:
+                - name: CRIME_DB_URL
+                  valueFrom:
+                    secretKeyRef: {name: crime-db-rw, key: CRIME_DB_URL}
+                - name: OPENDATA_API_KEY_ID
+                  valueFrom:
+                    secretKeyRef: {name: opendata, key: OPENDATA_API_KEY_ID, optional: true}
+                - name: OPENDATA_API_KEY_SECRET
+                  valueFrom:
+                    secretKeyRef: {name: opendata, key: OPENDATA_API_KEY_SECRET, optional: true}
+              resources:
+                requests: {cpu: 100m, memory: 256Mi}
+                limits: {memory: 1Gi}
+---
+# Weekly: full re-pull of BOTH resources to reconcile late edits that land in the
+# historic dataset the daily job doesn't read. Heavy (~10M rows) → long deadline.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: crime-ingest-weekly
+  namespace: crime
+spec:
+  schedule: "0 8 * * 1"           # Mondays 08:00 UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 7200
+      template:
+        spec:
+          restartPolicy: Never
+          imagePullSecrets:
+            - name: ghcr-pull
+          containers:
+            - name: ingest
+              image: ghcr.io/kardolus/crime-web:v1
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-m", "crimeweb.ingest", "weekly"]
+              env:
+                - name: CRIME_DB_URL
+                  valueFrom:
+                    secretKeyRef: {name: crime-db-rw, key: CRIME_DB_URL}
+                - name: OPENDATA_API_KEY_ID
+                  valueFrom:
+                    secretKeyRef: {name: opendata, key: OPENDATA_API_KEY_ID, optional: true}
+                - name: OPENDATA_API_KEY_SECRET
+                  valueFrom:
+                    secretKeyRef: {name: opendata, key: OPENDATA_API_KEY_SECRET, optional: true}
+              resources:
+                requests: {cpu: 200m, memory: 512Mi}
+                limits: {memory: 2Gi}
