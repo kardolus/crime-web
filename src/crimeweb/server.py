@@ -335,7 +335,7 @@ function empty(id, msg){ const cw = document.getElementById(id).closest('.chart-
 })();
 
 const HELP = {
-  year: ['Complaints by year', 'Total reported NYPD complaints per year for the current law-class, borough, and offense filters (the year filter does not apply here — this chart always spans all years). The current year is partial.'],
+  year: ['Complaints by year', 'Total reported NYPD complaints per year for the current law-class, borough, and offense filters (the year filter does not apply here — this chart always spans all years). The partial latest year is excluded so the trend doesn’t show a misleading drop.'],
   hour: ['Complaints by hour of day', 'Complaints bucketed by the hour the incident began (00–23, New York local), for the selected filters.'],
   dow: ['Complaints by day of week', 'Complaints by day of week (Mon–Sun) for the current filters.'],
   month: ['Complaints by month', 'Complaints by calendar month for the current filters — useful for seasonal patterns.'],

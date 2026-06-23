@@ -59,7 +59,7 @@ spec:
             - name: ghcr-pull
           containers:
             - name: ingest
-              image: ghcr.io/kardolus/crime-web:v2
+              image: ghcr.io/kardolus/crime-web:v3
               imagePullPolicy: IfNotPresent
               command: ["python", "-m", "crimeweb.ingest", "daily"]
               env:
@@ -100,7 +100,7 @@ spec:
             - name: ghcr-pull
           containers:
             - name: ingest
-              image: ghcr.io/kardolus/crime-web:v2
+              image: ghcr.io/kardolus/crime-web:v3
               imagePullPolicy: IfNotPresent
               command: ["python", "-m", "crimeweb.ingest", "weekly"]
               env:

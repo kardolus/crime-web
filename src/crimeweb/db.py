@@ -198,6 +198,7 @@ def complaints_by_year(klass, borough, cat):
     key = f"byyear:{klass}:{borough}:{cat}"
 
     def produce():
+        cutoff = available_years()["data"].get("latest_full") or 9999
         w, p = _where("all", klass, borough, cat)
         rows = _query(f"""
             SELECT extract(year from cmplnt_date)::int yr, count(*) total,
@@ -205,9 +206,11 @@ def complaints_by_year(klass, borough, cat):
                    count(*) FILTER (WHERE law_cat='MISDEMEANOR') misd,
                    count(*) FILTER (WHERE law_cat='VIOLATION') violation
             FROM complaints WHERE {w} GROUP BY 1 ORDER BY 1""", p)
+        # drop the partial latest year (e.g. a Q1-only current year) so the trend
+        # doesn't show a misleading cliff.
         return [{"year": _i(r["yr"]), "total": _i(r["total"]), "felony": _i(r["felony"]),
                  "misd": _i(r["misd"]), "violation": _i(r["violation"])}
-                for r in rows if _i(r["yr"]) >= MIN_YEAR]
+                for r in rows if MIN_YEAR <= _i(r["yr"]) <= cutoff]
     return _q(key, 6 * 3600, produce, [])
 
 
@@ -249,6 +252,7 @@ def class_by_year(borough, cat):
     key = f"classyr:{borough}:{cat}"
 
     def produce():
+        cutoff = available_years()["data"].get("latest_full") or 9999
         w, p = _where("all", "all", borough, cat)
         rows = _query(f"""
             SELECT extract(year from cmplnt_date)::int yr,
@@ -258,7 +262,7 @@ def class_by_year(borough, cat):
             FROM complaints WHERE {w} GROUP BY 1 ORDER BY 1""", p)
         return [{"year": _i(r["yr"]), "felony": _i(r["felony"]),
                  "misd": _i(r["misd"]), "violation": _i(r["violation"])}
-                for r in rows if _i(r["yr"]) >= MIN_YEAR]
+                for r in rows if MIN_YEAR <= _i(r["yr"]) <= cutoff]
     return _q(key, 6 * 3600, produce, [])
 
 

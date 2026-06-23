@@ -6,7 +6,7 @@
 #   kubectl create namespace crime
 #   kubectl -n crime create secret generic crime-db \
 #       --from-literal=CRIME_DB_URL='postgresql://crime_ro:<ro pw>@crime-postgres.crime.svc.cluster.local:5432/crime?sslmode=disable'
-#   docker build -t ghcr.io/kardolus/crime-web:v2 . ; docker push ghcr.io/kardolus/crime-web:v2
+#   docker build -t ghcr.io/kardolus/crime-web:v3 . ; docker push ghcr.io/kardolus/crime-web:v3
 #   kubectl -n crime create secret docker-registry ghcr-pull \
 #       --docker-server=ghcr.io --docker-username=kardolus --docker-password="$GITHUB_API_KEY"
 ---
@@ -28,7 +28,7 @@ spec:
         - name: ghcr-pull
       containers:
         - name: crime-web
-          image: ghcr.io/kardolus/crime-web:v2
+          image: ghcr.io/kardolus/crime-web:v3
           imagePullPolicy: IfNotPresent
           ports:
             - {containerPort: 8000, name: http}
