@@ -22,4 +22,4 @@ RUN useradd --create-home --uid 1000 app
 USER app
 
 EXPOSE 8000
-CMD ["python", "-m", "crashesweb.server"]
+CMD ["python", "-m", "crimeweb.server"]
