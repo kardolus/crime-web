@@ -147,10 +147,10 @@ _HOTSPOTS_BODY = """
     <table>
       <thead><tr>
         <th class="sortable" data-key="label" tabindex="0" aria-sort="none">Area<span class="ind"></span></th>
-        <th class="sortable num" data-key="total" tabindex="0" aria-sort="descending">Complaints<span class="ind">▼</span></th>
+        <th class="sortable num" data-key="total" tabindex="0" aria-sort="descending"><span class="lbl-full">Complaints</span><span class="lbl-short">Total</span><span class="ind">▼</span></th>
         <th class="sortable num" data-key="felony" tabindex="0" aria-sort="none">Felony<span class="ind"></span></th>
         <th class="sortable num" data-key="misd" tabindex="0" aria-sort="none">Misd.<span class="ind"></span></th>
-        <th class="sortable num" data-key="violation" tabindex="0" aria-sort="none">Violation<span class="ind"></span></th>
+        <th class="sortable num" data-key="violation" tabindex="0" aria-sort="none"><span class="lbl-full">Violation</span><span class="lbl-short">Viol.</span><span class="ind"></span></th>
       </tr></thead>
       <tbody id="rows"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
     </table>

@@ -98,12 +98,25 @@ th:first-child,td:first-child{width:100%}
 th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
 td.num{font-family:var(--font-mono)}
 td:last-child,th:last-child{white-space:nowrap}
+.lbl-short{display:none}   /* mobile-only abbreviated headers; shown in the <=600px block */
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}
 .dot.good{background:var(--good)}.dot.warn{background:var(--warn)}
 .dot.bad{background:var(--bad);box-shadow:0 0 0 2px color-mix(in srgb,var(--bad) 40%,transparent)}
 .note{color:var(--meta);font-size:12px;margin-top:8px}
 .section{font-family:var(--font-ui);font-size:12px;text-transform:uppercase;letter-spacing:.06em;
   color:var(--meta);font-weight:600;margin:28px 0 10px;border-top:1px solid var(--border);padding-top:20px}
+
+/* Phones (<=600px): desktop is untouched — this only stops the page from
+   scrolling sideways (the minmax(360px) chart grid) and fits the ranked table
+   (abbreviated headers: Complaints->Total, Violation->Viol.). */
+@media(max-width:600px){
+  .grid2{grid-template-columns:1fr}
+  table{font-size:13px}
+  th,td{padding:6px 7px}
+  td:first-child{white-space:normal;overflow-wrap:anywhere}
+  .lbl-full{display:none}
+  .lbl-short{display:inline}
+}
 
 @media(prefers-reduced-motion:reduce){
   *{transition:none!important;animation:none!important}
