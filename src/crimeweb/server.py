@@ -207,7 +207,7 @@ $('rows').addEventListener('mouseover', e => { const tr=e.target.closest('tr'); 
 $('rows').addEventListener('mouseout', e => { const tr=e.target.closest('tr'); const mk=tr&&markers.get(tr.dataset.i);
   if (mk){ mk.setStyle({weight:2, fillOpacity:.8}); } });
 
-const tileU = () => 'https://{s}.basemaps.cartocdn.com/' + (isDark()?'dark_all':'light_all') + '/{z}/{x}/{y}{r}.png';
+const tileU = () => 'https://{s}.basemaps.cartocdn.com/' + (isDark()?'dark_all':'light_all') + '/{z}/{x}/{y}{r}.png?key=cb1_2j74_1_539eb83ad47adb1bd24e0ccc';
 let tileLayer;
 async function load(){
   api('/api/summary').then(res => {
