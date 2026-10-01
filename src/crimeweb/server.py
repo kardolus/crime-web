@@ -209,6 +209,12 @@ $('rows').addEventListener('mouseout', e => { const tr=e.target.closest('tr'); c
 
 const tileU = () => 'https://{s}.basemaps.cartocdn.com/' + (isDark()?'dark_all':'light_all') + '/{z}/{x}/{y}{r}.png?key=cb1_2j74_1_539eb83ad47adb1bd24e0ccc';
 let tileLayer;
+function savedView(){
+  const m = /^#map=(\\d{1,2})\\/(-?\\d+(?:\\.\\d+)?)\\/(-?\\d+(?:\\.\\d+)?)$/.exec(location.hash);
+  if (!m) return null;
+  const z = +m[1], lat = +m[2], lng = +m[3];
+  return (z >= 1 && z <= 19 && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) ? {z, lat, lng} : null;
+}
 async function load(){
   api('/api/summary').then(res => {
     const s = res.data; if (!s || s.total==null) return;
@@ -226,8 +232,15 @@ async function load(){
     map = L.map('map');
     tileLayer = L.tileLayer(tileU(), {attribution:'© OpenStreetMap, © CARTO', maxZoom:19}).addTo(map);
     window.addEventListener('themechange', () => tileLayer.setUrl(tileU()));
-    if (pts.length) map.fitBounds(pts.map(x => [x.lat, x.lon]), {padding:[30,30]});
+    // A filter change reloads the page: the view travels in the hash (#map=zoom/lat/lng) so the map
+    // stays where the reader left it. No hash (first visit, or a borough change — ui.setFilter drops
+    // it) fits the hotspots.
+    const saved = savedView();
+    if (saved) map.setView([saved.lat, saved.lng], saved.z);
+    else if (pts.length) map.fitBounds(pts.map(x => [x.lat, x.lon]), {padding:[30,30]});
     else map.setView([40.7128, -74.0060], 11);
+    map.on('moveend', () => { const c = map.getCenter();
+      history.replaceState(null, '', `#map=${map.getZoom()}/${c.lat.toFixed(5)}/${c.lng.toFixed(5)}`); });
     setTimeout(() => map.invalidateSize(), 0);
   }
   if (layer) layer.remove();

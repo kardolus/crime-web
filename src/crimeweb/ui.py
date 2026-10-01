@@ -81,7 +81,10 @@ def _nav(active: str, f: dict) -> str:
 def _common_js(f: dict) -> str:
     return f"""<script>
 const P = {{year:"{f['year']}", "class":"{f['class']}", borough:"{f['borough']}", cat:"{f['cat']}"}};
-function setFilter(k,v){{ const q=new URLSearchParams(location.search); q.set(k,v); location.search='?'+q; }}
+// The map's view rides in the hash (#map=…) and survives a filter change; a new borough drops it
+// so the map fits that borough's hotspots instead of staying on the old one.
+function setFilter(k,v){{ const q=new URLSearchParams(location.search); q.set(k,v);
+  location.assign(location.pathname + '?' + q + (k==='borough' ? '' : location.hash)); }}
 function withP(u){{ return u + (u.includes('?')?'&':'?') + new URLSearchParams(P); }}
 async function api(u){{
   const r = await fetch(withP(u)); const j = await r.json();
