@@ -14,6 +14,7 @@ import base64
 import datetime
 import logging
 import os
+import time
 
 import httpx
 
@@ -143,7 +144,13 @@ def valid_year(s: str | None, ymax: int | None = None) -> str:
 
 
 # ───────────────────────── HTTP client + auth ─────────────────────────
-_TIMEOUT = float(os.environ.get("SOCRATA_TIMEOUT", "30"))
+# A 50,000-row page can take well over 30 s when NYC Open Data is slow (the weekly 10M-row re-pull
+# died on "The read operation timed out" 2026-10-05 and 2026-10-12), so the read timeout is
+# generous and every page is retried — keyset paging makes a repeated page harmless.
+_TIMEOUT = float(os.environ.get("SOCRATA_TIMEOUT", "120"))
+_ATTEMPTS = int(os.environ.get("SOCRATA_ATTEMPTS", "5"))
+_BACKOFF = (5, 15, 45, 90)          # seconds before attempts 2..5
+_RETRYABLE = {429, 500, 502, 503, 504}
 
 
 def _auth_kwargs() -> dict:
@@ -171,11 +178,26 @@ class SocrataError(Exception):
 
 
 def get(resource: str, **params) -> list[dict]:
-    """One SoQL GET against a specific resource URL. Numbers come back as strings."""
+    """One SoQL GET against a specific resource URL. Numbers come back as strings.
+    Timeouts, dropped connections, 429 and 5xx are retried with backoff (`_ATTEMPTS` tries);
+    any other HTTP error, or a body that is not JSON, fails at once."""
     params.setdefault("$limit", 50000)
-    try:
-        r = _client.get(resource, params=params)
-        r.raise_for_status()
-        return r.json()
-    except (httpx.HTTPError, ValueError) as e:
-        raise SocrataError(str(e)) from e
+    last: Exception | None = None
+    for attempt in range(_ATTEMPTS):
+        if attempt:
+            pause = _BACKOFF[min(attempt - 1, len(_BACKOFF) - 1)]
+            log.warning("socrata: attempt %d/%d after %s; retrying in %ds", attempt + 1, _ATTEMPTS,
+                        type(last).__name__, pause)
+            time.sleep(pause)
+        try:
+            r = _client.get(resource, params=params)
+            if r.status_code in _RETRYABLE:
+                last = httpx.HTTPStatusError(f"HTTP {r.status_code}", request=r.request, response=r)
+                continue
+            r.raise_for_status()
+            return r.json()
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            last = e
+        except (httpx.HTTPError, ValueError) as e:
+            raise SocrataError(str(e)) from e
+    raise SocrataError(f"{last} (after {_ATTEMPTS} attempts)") from last
