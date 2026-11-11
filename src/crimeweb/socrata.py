@@ -147,9 +147,12 @@ def valid_year(s: str | None, ymax: int | None = None) -> str:
 # A 50,000-row page can take well over 30 s when NYC Open Data is slow (the weekly 10M-row re-pull
 # died on "The read operation timed out" 2026-10-05 and 2026-10-12), so the read timeout is
 # generous and every page is retried — keyset paging makes a repeated page harmless.
+# The waits add up to ~15.5 min, enough to ride out a typical Socrata 503 window (2026-11-09's
+# lasted >30 min and beat the old ~2.5 min budget twice); longer outages fall through to the
+# Job's pod retries, which resume from the ingest checkpoint instead of starting over.
 _TIMEOUT = float(os.environ.get("SOCRATA_TIMEOUT", "120"))
-_ATTEMPTS = int(os.environ.get("SOCRATA_ATTEMPTS", "5"))
-_BACKOFF = (5, 15, 45, 90)          # seconds before attempts 2..5
+_ATTEMPTS = int(os.environ.get("SOCRATA_ATTEMPTS", "8"))
+_BACKOFF = (5, 15, 45, 90, 180, 300, 300)   # seconds before attempts 2..8
 _RETRYABLE = {429, 500, 502, 503, 504}
 
 

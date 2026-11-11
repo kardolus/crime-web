@@ -51,7 +51,7 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 2
-      activeDeadlineSeconds: 1800
+      activeDeadlineSeconds: 3600   # room for one ~15 min Socrata retry window per pod
       template:
         spec:
           restartPolicy: Never
@@ -59,7 +59,7 @@ spec:
             - name: ghcr-pull
           containers:
             - name: ingest
-              image: ghcr.io/kardolus/crime-web:v10
+              image: ghcr.io/kardolus/crime-web:v11
               imagePullPolicy: IfNotPresent
               command: ["python", "-m", "crimeweb.ingest", "daily"]
               env:
@@ -91,8 +91,10 @@ spec:
   startingDeadlineSeconds: 3600
   jobTemplate:
     spec:
-      backoffLimit: 1
-      activeDeadlineSeconds: 7200
+      # retry pods resume from the ingest_checkpoint table, so extra retries cost no rework;
+      # the deadline covers ~1h of pulling plus a few ~15 min outage waits
+      backoffLimit: 3
+      activeDeadlineSeconds: 10800
       template:
         spec:
           restartPolicy: Never
@@ -100,7 +102,7 @@ spec:
             - name: ghcr-pull
           containers:
             - name: ingest
-              image: ghcr.io/kardolus/crime-web:v10
+              image: ghcr.io/kardolus/crime-web:v11
               imagePullPolicy: IfNotPresent
               command: ["python", "-m", "crimeweb.ingest", "weekly"]
               env:

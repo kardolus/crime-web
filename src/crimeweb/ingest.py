@@ -29,6 +29,9 @@ DSN = os.environ["CRIME_DB_URL"]
 PAGE = 50000
 DAILY_LOOKBACK_DAYS = 30   # re-pull recent window (complaint corrections lag)
 CLUSTER_GRID_FT = 500      # ~150 m grid in EPSG:2263 (NY State Plane, feet)
+# A failed backfill/weekly pod resumes from its checkpoint if the checkpoint was touched
+# this recently; older ones belong to an abandoned run and are discarded (start over).
+RESUME_WINDOW_HOURS = 20
 
 COLS = ["cmplnt_num", "cmplnt_date", "hour", "borough", "precinct",
         "law_cat", "ofns_desc", "bucket", "lat", "lon"]
@@ -87,9 +90,10 @@ def _upsert(cur, rows):
     execute_values(cur, _UPSERT, [[r[c] for c in COLS] for r in seen.values()], page_size=2000)
 
 
-def _pages(resource, where_extra=None):
-    """Keyset pagination by cmplnt_num (a TEXT field — lexical order; avoids deep $offset)."""
-    last = None
+def _pages(resource, where_extra=None, start_after=None):
+    """Keyset pagination by cmplnt_num (a TEXT field — lexical order; avoids deep $offset).
+    `start_after` resumes after that cmplnt_num (from a checkpoint)."""
+    last = start_after
     while True:
         where = "cmplnt_num IS NOT NULL" if last is None else f"cmplnt_num > '{last}'"
         if where_extra:
@@ -104,20 +108,90 @@ def _pages(resource, where_extra=None):
             return
 
 
-def _ingest_resource(conn, resource, where_extra=None, label=""):
+# ───────────────────────── resume checkpoints ─────────────────────────
+# The weekly re-pull reads ~10M rows over ~1h. A Socrata outage mid-pull used to kill the pod,
+# and the Job's retry pod started again from the first page (2026-11-09: two pods, 19 + 32 min,
+# both lost to the same 503 outage). Now every page commits its keyset cursor in the same
+# transaction as its rows, so a retry pod picks up exactly where the last one stopped.
+
+def _ensure_checkpoints(conn):
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ingest_checkpoint (
+              key         text PRIMARY KEY,          -- '<mode>:<label>', e.g. 'weekly:historic'
+              last_cmplnt text,                      -- keyset cursor: last source cmplnt_num done
+              rows_done   bigint NOT NULL DEFAULT 0,
+              done_at     timestamptz,               -- resource finished (skip it on resume)
+              updated_at  timestamptz NOT NULL DEFAULT now()
+            )""")
+    conn.commit()
+
+
+def _load_checkpoint(conn, key):
+    """(last_cmplnt, rows_done, done) for a fresh checkpoint, else None (and the stale one is reset)."""
+    with conn.cursor() as cur:
+        cur.execute("""SELECT last_cmplnt, rows_done, done_at IS NOT NULL FROM ingest_checkpoint
+                       WHERE key=%s AND updated_at > now() - make_interval(hours => %s)""",
+                    (key, RESUME_WINDOW_HOURS))
+        row = cur.fetchone()
+        if row is None:
+            cur.execute("""INSERT INTO ingest_checkpoint (key) VALUES (%s)
+                           ON CONFLICT (key) DO UPDATE SET last_cmplnt=NULL, rows_done=0,
+                             done_at=NULL, updated_at=now()""", (key,))
+    conn.commit()
+    return row
+
+
+def _save_checkpoint(cur, key, last_cmplnt, rows_done):
+    cur.execute("""UPDATE ingest_checkpoint SET last_cmplnt=%s, rows_done=%s, updated_at=now()
+                   WHERE key=%s""", (last_cmplnt, rows_done, key))
+
+
+def _finish_checkpoint(conn, key):
+    with conn.cursor() as cur:
+        cur.execute("UPDATE ingest_checkpoint SET done_at=now(), updated_at=now() WHERE key=%s", (key,))
+    conn.commit()
+
+
+def _clear_checkpoints(conn, mode):
+    """A run that completed leaves nothing to resume: the next run starts from the top."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM ingest_checkpoint WHERE key LIKE %s", (f"{mode}:%",))
+    conn.commit()
+
+
+def _ingest_resource(conn, resource, where_extra=None, label="", checkpoint=None):
+    """Upsert every page of `resource`. With `checkpoint` (a key), progress is saved per page
+    and a recent unfinished checkpoint is resumed from; a finished one skips the resource."""
     total = 0
     unmapped = {}
-    for page in _pages(resource, where_extra):
+    start_after = None
+    if checkpoint:
+        cp = _load_checkpoint(conn, checkpoint)
+        if cp:
+            last_cmplnt, rows_done, done = cp
+            if done:
+                log.info("%s: already finished in this run (%d rows) — skipping", label, rows_done)
+                return 0
+            if last_cmplnt:
+                start_after, total = last_cmplnt, rows_done
+                log.info("%s: resuming after cmplnt_num %s (%d rows already done)",
+                         label, last_cmplnt, rows_done)
+    for page in _pages(resource, where_extra, start_after):
         rows = [r for r in (_row(x) for x in page) if r]
         for x in page:  # track unmapped offense descs to tune the bucket table
             d = (x.get("ofns_desc") or "").strip()
             if d and d not in socrata.OFNS_BUCKET:
                 unmapped[d] = unmapped.get(d, 0) + 1
+        total += len(rows)
         with conn.cursor() as cur:
             _upsert(cur, rows)
+            if checkpoint:  # same transaction as the rows: never ahead of, or behind, the data
+                _save_checkpoint(cur, checkpoint, page[-1]["cmplnt_num"], total)
         conn.commit()
-        total += len(rows)
         log.info("%s: upserted %d (running %d)", label, len(rows), total)
+    if checkpoint:
+        _finish_checkpoint(conn, checkpoint)
     if unmapped:
         top = sorted(unmapped.items(), key=lambda kv: -kv[1])[:10]
         log.info("%s: top unmapped ofns_desc -> 'other': %s", label, top)
@@ -174,9 +248,13 @@ def run(mode: str):
     conn = psycopg2.connect(DSN)
     conn.autocommit = False
     total = 0
-    if mode in ("backfill", "weekly"):
-        total += _ingest_resource(conn, socrata.RESOURCE_HISTORIC, label="historic")
-        total += _ingest_resource(conn, socrata.RESOURCE_CURRENT, label="current")
+    full = mode in ("backfill", "weekly")
+    if full:
+        _ensure_checkpoints(conn)
+        total += _ingest_resource(conn, socrata.RESOURCE_HISTORIC, label="historic",
+                                  checkpoint=f"{mode}:historic")
+        total += _ingest_resource(conn, socrata.RESOURCE_CURRENT, label="current",
+                                  checkpoint=f"{mode}:current")
     else:  # daily — only the current-YTD resource, recent window
         with conn.cursor() as cur:
             cur.execute("SELECT last_cmplnt_date FROM ingest_state WHERE id=1")
@@ -191,6 +269,8 @@ def run(mode: str):
 
     recluster(conn)
     _update_state(conn)
+    if full:
+        _clear_checkpoints(conn, mode)
     with conn.cursor() as cur:
         cur.execute("SELECT rows_total, last_cmplnt_date FROM ingest_state WHERE id=1")
         rt, lcd = cur.fetchone()
